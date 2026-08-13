@@ -1017,6 +1017,8 @@ class ObservabilityConfig:
 
     * ``AIPERF_SERVER_METRICS_URLS`` for ``benchmark.type: custom`` runs, so
       AIPerf scrapes the workers and not just its auto-detected frontend.
+    * a live Prometheus scraper writing ``raw_prometheus.jsonl`` for the whole
+      benchmark window (see ``scrape_*`` below).
 
     Every expansion uses setdefault semantics: an explicit value in the recipe
     always wins, so ``observability.enabled`` is safe to switch on globally.
@@ -1027,6 +1029,10 @@ class ObservabilityConfig:
             and frontends. Requires otel_endpoint to be set. Default: False.
         otel_endpoint: OTEL collector endpoint (e.g. "http://10.0.0.1:4317").
             Required when enable_otel is True.
+        scrape_metrics: Run the in-job Prometheus scraper. Defaults to the value
+            of ``enabled``; set False to opt out while keeping the rest.
+        scrape_interval_seconds: Seconds between scrape sweeps.
+        scrape_output: Filename (under the run's log dir) for the RAW capture.
         aiperf_export_level: Value passed through to AIPerf's ``--export-level``.
             ``analytics`` implies per-record JSONL plus server-metrics JSONL on
             builds that support it; older builds should use ``records`` and rely
@@ -1041,6 +1047,10 @@ class ObservabilityConfig:
     enable_otel: bool = False
     otel_endpoint: str | None = None
 
+    scrape_metrics: bool | None = None
+    scrape_interval_seconds: float = 3.0
+    scrape_output: str = "raw_prometheus.jsonl"
+
     aiperf_export_level: str = "records"
     aiperf_server_metrics_formats: tuple[str, ...] = ("json", "csv", "jsonl")
     # None by default: InferenceX's benchmark_lib.sh already passes
@@ -1049,6 +1059,11 @@ class ObservabilityConfig:
     aiperf_slice_duration: float | None = None
 
     Schema: ClassVar[type[Schema]] = Schema
+
+    @property
+    def scraper_enabled(self) -> bool:
+        """Whether the in-job Prometheus scraper should run."""
+        return self.enabled if self.scrape_metrics is None else self.scrape_metrics
 
 
 @dataclass(frozen=True)
