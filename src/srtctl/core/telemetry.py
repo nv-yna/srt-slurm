@@ -107,16 +107,24 @@ def generate_tachometer_config(
         # exactly what the physical-process client list provides for vLLM DP.
         if frontend_type == "vllm" and process.endpoint_mode == "agg" and not process.is_leader:
             continue
-        if frontend_type == "vllm-router" and process.http_port <= 0:
+        if frontend_type in ("vllm-router", "trtllm_serve") and process.http_port <= 0:
             continue
         node_ip = get_hostname_ip(process.node, runtime.network_interface)
+        metrics_path = "/metrics"
         if frontend_type == "vllm" and process.endpoint_mode == "agg":
             port = FRONTEND_PUBLIC_PORT
         elif frontend_type == "vllm-router":
             port = process.http_port
+        elif frontend_type == "trtllm_serve":
+            # trtllm-serve workers listen on their HTTP port; their /metrics is
+            # a JSON iteration-stats endpoint, not Prometheus text. The scrapable
+            # Prometheus surface is /prometheus/metrics, mounted only when the
+            # engine runs with return_perf_metrics: true.
+            port = process.http_port
+            metrics_path = "/prometheus/metrics"
         else:
             port = process.sys_port
-        url = f"http://{node_ip}:{port}/metrics"
+        url = f"http://{node_ip}:{port}{metrics_path}"
         if url in exclude_urls:
             # The benchmark client already polls this endpoint on its own
             # cadence; scrape the complement instead of double-polling.
@@ -158,10 +166,14 @@ def generate_tachometer_config(
             "hostname": node,
         }
         node_metadata.update(tachometer.extra_metadata)
+        # The trtllm-serve disaggregated orchestrator mounts its Prometheus app
+        # (queue latency, per-request disagg metrics) at /prometheus/metrics
+        # unconditionally; its /metrics does not exist.
+        frontend_path = "/prometheus/metrics" if frontend_type == "trtllm_serve" else "/metrics"
         endpoints.append(
             TelemetryEndpoint(
                 name=f"frontend{frontend_index}",
-                url=f"http://{node_ip}:{frontend_topology.frontend_port}/metrics",
+                url=f"http://{node_ip}:{frontend_topology.frontend_port}{frontend_path}",
                 frequency=tachometer.default_frequency,
                 filter="frontend",
                 node_metadata=node_metadata,

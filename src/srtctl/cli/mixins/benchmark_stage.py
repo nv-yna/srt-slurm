@@ -378,6 +378,14 @@ class BenchmarkStageMixin:
 
         logger.info("Running %s benchmark", runner.name)
 
+        # trtllm-serve keeps its per-request perf metrics (the time_breakdown
+        # tool's input) in memory only — they die with the job. Dump them right
+        # after the load finishes, before any teardown.
+        dump_perf_metrics = (
+            self.config.frontend.type == "trtllm_serve"
+            and getattr(getattr(self.config, "observability", None), "enabled", False) is True
+        )
+
         # Tachometer scrapes the load window only, the same window the
         # benchmark client's own AIPERF polling covers. Starting it with the
         # other telemetry (before the health gate) recorded minutes of
@@ -397,6 +405,8 @@ class BenchmarkStageMixin:
         try:
             exit_code = self._run_benchmark_script(runner, benchmark_log, stop_event)
         finally:
+            if dump_perf_metrics:
+                self._dump_trtllm_serve_perf_metrics()
             if tachometer_procs:
                 self.stop_tachometer(tachometer_procs)
 
@@ -559,6 +569,43 @@ class BenchmarkStageMixin:
                 launched_nodes,
             )
         return procs
+
+    def _dump_trtllm_serve_perf_metrics(self) -> None:
+        """Persist trtllm-serve's in-memory per-request perf metrics to disk.
+
+        The disagg orchestrator and every worker expose ``GET /perf_metrics``
+        (bounded by the engine's ``perf_metrics_max_requests``); the payload is
+        the input of ``tensorrt_llm/serve/scripts/time_breakdown``. It exists
+        only in process memory, so it must be fetched after the load and
+        before teardown. Best-effort: a diagnostic dump must never change the
+        run's exit code.
+        """
+        import requests
+
+        frontend_ip = get_hostname_ip(self._public_api_node(), self.runtime.network_interface)
+        frontend_url = f"http://{frontend_ip}:{self.runtime.frontend_port}/perf_metrics"
+        targets: list[tuple[str, str]] = [("frontend", frontend_url)]
+        for process in self.backend_processes:
+            if not process.is_leader or process.http_port <= 0:
+                continue
+            host = get_hostname_ip(process.node, self.runtime.network_interface)
+            targets.append(
+                (
+                    f"{process.endpoint_mode}{process.endpoint_index}",
+                    f"http://{host}:{process.http_port}/perf_metrics",
+                )
+            )
+
+        for name, url in targets:
+            out_path = self.runtime.log_dir / f"perf_metrics_{name}.json"
+            try:
+                with requests.get(url, stream=True, timeout=(5, 300)) as resp:
+                    resp.raise_for_status()
+                    with open(out_path, "wb") as f:
+                        f.writelines(resp.iter_content(chunk_size=1 << 20))
+                logger.info("perf_metrics dump: %s -> %s (%d bytes)", url, out_path, out_path.stat().st_size)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("perf_metrics dump failed for %s (%s): %s", name, url, e)
 
     def _get_benchmark_profiling_env(
         self,
