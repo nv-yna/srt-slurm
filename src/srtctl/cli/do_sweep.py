@@ -689,6 +689,12 @@ class SweepOrchestrator(
 
             # Stage 2: Workers
             reporter.report(JobStatus.WORKERS, JobStage.WORKERS, "Starting workers")
+            # Landing pad for per-request engine perf-metrics JSONL (TRT-LLM's
+            # perf_metrics_output_dir and dynamo's DYN_TRTLLM_PERF_METRICS_DIR
+            # both point at /logs/trtllm-perf-metrics in the diagnostic
+            # recipes); neither writer is guaranteed to create it.
+            (self.runtime.log_dir / "trtllm-perf-metrics").mkdir(parents=True, exist_ok=True)
+
             worker_procs = self.start_all_workers()
             registry.add_processes(worker_procs)
 
