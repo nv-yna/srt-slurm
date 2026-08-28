@@ -125,6 +125,15 @@ class TRTLLMProtocol:
     #      restarts at 0 for both).
     numa_cpu_bind: bool = False
 
+    # Optional verbatim argv prefix for every worker command (prefill/decode/
+    # agg), applied before nsys/numactl/trtllm-llmapi-launch. Diagnostic hook:
+    # e.g. ["bash", "/configs/pyspy_wrap.sh"] wraps rank 0 of each worker in a
+    # py-spy sampling profiler (the wrapper itself gates on SLURM_PROCID and
+    # execs straight through everywhere else). The prefix must exec its
+    # arguments; anything that swallows signals or exit codes will break
+    # worker supervision.
+    worker_command_prefix: tuple[str, ...] = ()
+
     Schema: ClassVar[builtins.type[Schema]] = Schema
 
     # =========================================================================
@@ -278,7 +287,9 @@ class TRTLLMProtocol:
         else:
             use_numactl = self.numa_memory_bind and mode in ("prefill", "decode")
         numactl_prefix = ["numactl", "-m", "0,1"] if use_numactl else []
-        base_prefix = list(nsys_prefix or []) + numactl_prefix + ["trtllm-llmapi-launch"]
+        base_prefix = (
+            list(self.worker_command_prefix) + list(nsys_prefix or []) + numactl_prefix + ["trtllm-llmapi-launch"]
+        )
 
         # trtllm-serve path: launch an OpenAI-compatible trtllm-serve worker. In
         # disaggregated mode the trtllm_serve frontend fronts these via a static
