@@ -119,3 +119,18 @@ class TestPerfMetricsDump:
         with patch("requests.get", side_effect=OSError("connection refused")):
             stage._dump_trtllm_serve_perf_metrics()  # must not raise
         assert not list(tmp_path.glob("perf_metrics_*.json"))
+
+
+def test_dynamo_hash_build_honors_repo_url():
+    """`dynamo.repo_url` steers the in-job source build to a fork; the default
+    stays on ai-dynamo (previously required hand-patching the clone URL on the
+    cluster checkout)."""
+    from srtctl.core.schema import DynamoConfig
+
+    fork = DynamoConfig(install=True, hash="8f2d22ff9244", repo_url="https://github.com/nv-yna/dynamo.git")
+    cmd = fork.get_install_commands()
+    assert "git clone https://github.com/nv-yna/dynamo.git dynamo" in cmd
+    assert "git checkout 8f2d22ff9244" in cmd
+
+    default = DynamoConfig(install=True, hash="8f2d22ff9244")
+    assert "git clone https://github.com/ai-dynamo/dynamo.git dynamo" in default.get_install_commands()

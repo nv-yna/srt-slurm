@@ -1340,7 +1340,11 @@ def _cached_sidecar_build(
     )
 
 
-def _hash_cached_source_install(dynamo_hash: str, cargo_patches: list[str] | None = None) -> str:
+def _hash_cached_source_install(
+    dynamo_hash: str,
+    cargo_patches: list[str] | None = None,
+    repo_url: str = "https://github.com/ai-dynamo/dynamo.git",
+) -> str:
     """Bash for hash-pinned source install with a /configs/dynamo-wheels cache.
 
     Cache layout: ``{root}/<key>/`` contains the maturin wheel
@@ -1387,7 +1391,7 @@ def _hash_cached_source_install(dynamo_hash: str, cargo_patches: list[str] | Non
         f"pip install --break-system-packages --force-reinstall --quiet maturin && "
         # Clone + build the runtime wheel.
         f"DYN_BUILD_DIR=$(mktemp -d) && cd $DYN_BUILD_DIR && "
-        f"git clone https://github.com/ai-dynamo/dynamo.git && "
+        f"git clone {repo_url} dynamo && "
         f"cd dynamo && git checkout {dynamo_hash} && "
         f"{override_cmd}"
         f"cd lib/bindings/python/ && "
@@ -1550,6 +1554,11 @@ class DynamoConfig:
     # from an unmerged branch without waiting for a crates.io release.
     cargo_patches: list[str] | None = None
 
+    # Git URL for `hash` source builds. Lets a diagnostic run build dynamo from
+    # a fork branch commit without hand-patching this file on the cluster (a
+    # fork was previously wired in by editing the clone URL in place).
+    repo_url: str = "https://github.com/ai-dynamo/dynamo.git"
+
     def __post_init__(self) -> None:
         install_sources = [
             ("hash", self.hash is not None),
@@ -1673,7 +1682,7 @@ class DynamoConfig:
         # to ~10 sec lustre access for repeat hashes. top_of_tree skips the
         # cache (no stable key) and always live-builds.
         if self.hash is not None:
-            return _hash_cached_source_install(self.hash, self.cargo_patches)
+            return _hash_cached_source_install(self.hash, self.cargo_patches, self.repo_url)
 
         return _live_source_install_for_top_of_tree()
 
